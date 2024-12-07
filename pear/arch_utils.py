@@ -11,6 +11,100 @@ log = logging.getLogger(__name__)
 
 class ArchUtils:
     @staticmethod
+    def check_compiler_exists() -> bool:
+        '''
+        Assert compiler accessible for current architecture
+        :return: if compiler found for current architecture
+        '''
+        raise NotImplementedError
+
+    @staticmethod
+    def backup_registers(label: str) -> str:
+        '''
+        Generate asm for backing up registers to given label
+        :param label: Label to backup registers to.
+        :return: Intel-formatted assembly
+        '''
+        raise NotImplementedError
+
+    @staticmethod
+    def restore_registers(label: str) -> str:
+        '''
+        Generate asm for restoring registers to given label
+        :param label: Label to backup registers to.
+        :return: Intel-formatted assembly
+        '''
+        raise NotImplementedError
+
+    @staticmethod
+    def call_function(func: str,
+                      save_stack: Optional[int]=0,
+                      pre_call: Optional[str]='',
+                      post_call: Optional[str]='') -> str:
+        '''
+        Generate asm calling function
+        :param func: Name of function to call.
+        :param save_stack: Number of bytes of stack above the stack pointer to
+            save before running function call (some ISAs require this)
+        :param pre_call: assembly to insert immediately prior to call
+        :param post_call: assembly to insert immediately post to call
+        :return: Intel-formatted assembly
+        '''
+        raise NotImplementedError
+
+    @staticmethod
+    def generate(ir_file: str, output: str, working_dir: str, *args,
+                 gen_assembly: Optional[bool]=False,
+                 gen_binary: Optional[bool]=False, 
+                 obj_link: Optional[list[str]]=None, **kwargs):
+        """
+        Generate binary or assembly from instrumented IR.
+
+        :param ir_file: File location of GTIRB IR to generate from
+        :param output: File location of output assembly and/or binary. '.exe'
+            will be added for output binary and '.S' for assembly.
+        :param working_dir: Local working directory to generate intermediary
+            files
+        :param gen_assembly: True if generating assembly
+        :param gen_binary: True if generating binary
+        :param obj_link: paths of additional objects / libraries to link
+        """
+        # The following is a stub that calls gtirb-pprinter on the IR directly.
+        # No support for linking in static objects or any changes to default
+        # gtirb-pprinter binary generation.
+        assert gen_assembly or gen_binary, \
+            "One of gen_assembly or gen_binary must be true"
+
+        if not (obj_link == None or obj_link == []):
+            raise NotImplementedError
+
+        basename = os.path.basename(output)
+        asm_path = os.path.join(working_dir, f'{basename}.S')
+        bin_path = os.path.join(working_dir, f'{basename}.exe')
+
+        assert check_executables_exist(['gtirb-pprinter']), "gtirb-pprinter not found"
+
+        gen_args = []
+        if gen_assembly:
+            gen_args += ['--asm', asm_path]
+        if gen_binary:
+            gen_args += ['--binary', bin_path]
+
+        cmd = ["gtirb-pprinter", ir_file] + gen_args
+        run_cmd(cmd)
+
+        if gen_assembly:
+            log.info(f'Generated assembly saved to: {asm_path}')
+        if gen_binary:
+            log.info(f'Generated binary saved to: {bin_path}')
+
+class LinuxUtils(ArchUtils):
+    @staticmethod
+    def check_compiler_exists() -> bool:
+        assert check_executables_exist(['gcc'])
+        return True
+
+    @staticmethod
     def backup_registers(label: str) -> str:
         '''
         Generate asm for backing up registers to given label
@@ -90,7 +184,14 @@ class ArchUtils:
         if gen_binary:
             log.info(f'Generated binary saved to: {bin_path}')
 
+
 class WindowsUtils(ArchUtils):
+    @staticmethod
+    def check_compiler_exists() -> bool:
+        assert check_executables_exist(['cl']), \
+            "MSVC build tools not found, are you running in a developer command prompt?"
+        return True
+
     @staticmethod
     def generate_def_file(ir: gtirb.IR, out_folder: str,
                         ignore_dlls: Optional[list[str]]=None) -> dict[str, str]:
@@ -279,6 +380,15 @@ class WindowsUtils(ArchUtils):
 
 class WindowsX86Utils(WindowsUtils):
     @staticmethod
+    def check_compiler_exists() -> bool:
+        if WindowsUtils.check_compiler_exists():
+            cl_out, _ = run_cmd(["cl"], print=False)
+            assert b"for x86" in cl_out, \
+                "32-bit MSVC build tools must be used to generate 32-bit instrumented binary"
+            return True
+        return False
+
+    @staticmethod
     def backup_registers(label: str) -> str:
         return f'''
             mov    DWORD PTR [{label}], eax
@@ -354,6 +464,15 @@ class WindowsX86Utils(WindowsUtils):
         '''
 
 class WindowsX64Utils(WindowsUtils):
+    @staticmethod
+    def check_compiler_exists() -> bool:
+        if WindowsUtils.check_compiler_exists():
+            cl_out, _ = run_cmd(["cl"], print=False)
+            assert b"for x64" in cl_out, \
+                "64-bit MSVC build tools must be used to generate 64-bit instrumented binary"
+            return True
+        return False
+
     @staticmethod
     def backup_registers(label: str) -> str:
         return f'''

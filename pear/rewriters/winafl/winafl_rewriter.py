@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 class WinAFLRewriter(Rewriter):
     """
-    This class implements WinAFL instrumentation on x86 and x64 binaries.
+    This class implements WinAFL instrumentation on x86 and x64 Windows binaries.
     """
     @staticmethod
     def build_parser(parser: argparse._SubParsersAction):
@@ -110,15 +110,10 @@ class WinAFLRewriter(Rewriter):
                 assert False, (f'Can\'t parse "{func}" as address, please provide hex address')
 
         # check compiler right version
-        assert check_executables_exist(['cl']), \
-            "MSVC build tools not found, are you running in a developer command prompt?"
-        cl_out, _ = run_cmd(["cl"], print=False)
         if self.is_64bit:
-            assert b"for x64" in cl_out, \
-                "64-bit MSVC build tools must be used to generate 64-bit instrumented binary"
+            WindowsX86Utils.check_compiler_exists()
         else:
-            assert b"for x86" in cl_out, \
-                "32-bit MSVC build tools must be used to generate 32-bit instrumented binary"
+            WindowsX64Utils.check_compiler_exists()
         log.info(f"{'64-bit' if self.is_64bit else '32-bit'} MSVC build tools found.")
 
     def rewrite(self) -> gtirb.IR:

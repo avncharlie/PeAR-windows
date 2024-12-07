@@ -10,7 +10,7 @@ import gtirb
 
 from .rewriter import Rewriter
 from ..utils import run_cmd
-from ..arch_utils import WindowsUtils
+from ..arch_utils import ArchUtils, WindowsUtils, WindowsX64Utils, WindowsX86Utils, LinuxUtils
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ be possible."""
                  mappings: OrderedDict[int, uuid.UUID]):
         self.ir = ir
         self.link: list[str] = args.link
+        self.is_64bit = ir.modules[0].isa == gtirb.Module.ISA.X64
+        self.is_windows = ir.modules[0].file_format == gtirb.Module.FileFormat.PE
+        self.is_linux = ir.modules[0].file_format == gtirb.Module.FileFormat.ELF
 
         # convert relative library paths to absolute paths
         link = []
@@ -55,6 +58,14 @@ be possible."""
                     link.append(l)
         self.link = link
 
+        # check we have compiler
+        if self.is_windows and self.is_64bit:
+            WindowsX64Utils.check_compiler_exists()
+        if self.is_windows and not self.is_64bit:
+            WindowsX86Utils.check_compiler_exists()
+        if self.is_linux and self.is_64bit:
+            LinuxUtils.check_compiler_exists()
+
     def rewrite(self) -> gtirb.IR:
         return self.ir
 
@@ -63,7 +74,13 @@ be possible."""
                  gen_assembly: Optional[bool]=False,
                  gen_binary: Optional[bool]=False,
                  **kwargs):
-        WindowsUtils.generate(ir_file, output, working_dir, self.ir,
+        if self.is_windows:
+            WindowsUtils.generate(ir_file, output, working_dir, self.ir,
+                                    gen_assembly=gen_assembly,
+                                    gen_binary=gen_binary,
+                                    obj_link=self.link)
+        if self.is_linux:
+            ArchUtils.generate(ir_file, output, working_dir, self.ir,
                                     gen_assembly=gen_assembly,
                                     gen_binary=gen_binary,
                                     obj_link=self.link)
