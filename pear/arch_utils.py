@@ -53,7 +53,7 @@ class ArchUtils:
         raise NotImplementedError
 
     @staticmethod
-    def generate(ir_file: str, output: str, working_dir: str, *args,
+    def generate(output: str, working_dir: str, ir: gtirb.IR, *args, 
                  gen_assembly: Optional[bool]=False,
                  gen_binary: Optional[bool]=False, 
                  obj_link: Optional[list[str]]=None, **kwargs):
@@ -62,7 +62,8 @@ class ArchUtils:
 
         :param ir_file: File location of GTIRB IR to generate from
         :param output: File location of output assembly and/or binary. '.exe'
-            will be added for output binary and '.S' for assembly.
+            will be added for output binary, '.S' for assembly and '.gtirb' for 
+            IR.
         :param working_dir: Local working directory to generate intermediary
             files
         :param gen_assembly: True if generating assembly
@@ -72,15 +73,20 @@ class ArchUtils:
         # The following is a stub that calls gtirb-pprinter on the IR directly.
         # No support for linking in static objects or any changes to default
         # gtirb-pprinter binary generation.
+        basename = os.path.basename(output)
+        asm_path = os.path.join(working_dir, f'{basename}.S')
+        bin_path = os.path.join(working_dir, f'{basename}.exe')
+        ir_file = os.path.join(working_dir, f'{basename}.gtirb')
+
+        # Generate IR
+        ir.save_protobuf(ir_file)
+        log.info(f'Instrumented IR saved to: {ir_file}')
+
         assert gen_assembly or gen_binary, \
             "One of gen_assembly or gen_binary must be true"
 
         if not (obj_link == None or obj_link == []):
             raise NotImplementedError
-
-        basename = os.path.basename(output)
-        asm_path = os.path.join(working_dir, f'{basename}.S')
-        bin_path = os.path.join(working_dir, f'{basename}.exe')
 
         assert check_executables_exist(['gtirb-pprinter']), "gtirb-pprinter not found"
 
@@ -106,20 +112,10 @@ class LinuxUtils(ArchUtils):
 
     @staticmethod
     def backup_registers(label: str) -> str:
-        '''
-        Generate asm for backing up registers to given label
-        :param label: Label to backup registers to.
-        :return: Intel-formatted assembly
-        '''
         raise NotImplementedError
 
     @staticmethod
     def restore_registers(label: str) -> str:
-        '''
-        Generate asm for restoring registers to given label
-        :param label: Label to backup registers to.
-        :return: Intel-formatted assembly
-        '''
         raise NotImplementedError
 
     @staticmethod
@@ -127,63 +123,14 @@ class LinuxUtils(ArchUtils):
                       save_stack: Optional[int]=0,
                       pre_call: Optional[str]='',
                       post_call: Optional[str]='') -> str:
-        '''
-        Generate asm calling function
-        :param func: Name of function to call.
-        :param save_stack: Number of bytes of stack above the stack pointer to
-            save before running function call (some ISAs require this)
-        :param pre_call: assembly to insert immediately prior to call
-        :param post_call: assembly to insert immediately post to call
-        :return: Intel-formatted assembly
-        '''
         raise NotImplementedError
 
     @staticmethod
-    def generate(ir_file: str, output: str, working_dir: str, *args,
+    def generate(output: str, working_dir: str, ir: gtirb.IR, *args, 
                  gen_assembly: Optional[bool]=False,
                  gen_binary: Optional[bool]=False, 
                  obj_link: Optional[list[str]]=None, **kwargs):
-        """
-        Generate binary or assembly from instrumented IR.
-
-        :param ir_file: File location of GTIRB IR to generate from
-        :param output: File location of output assembly and/or binary. '.exe'
-            will be added for output binary and '.S' for assembly.
-        :param working_dir: Local working directory to generate intermediary
-            files
-        :param gen_assembly: True if generating assembly
-        :param gen_binary: True if generating binary
-        :param obj_link: paths of additional objects / libraries to link
-        """
-        # The following is a stub that calls gtirb-pprinter on the IR directly.
-        # No support for linking in static objects or any changes to default
-        # gtirb-pprinter binary generation.
-        assert gen_assembly or gen_binary, \
-            "One of gen_assembly or gen_binary must be true"
-
-        if obj_link != None:
-            raise NotImplementedError
-
-        basename = os.path.basename(output)
-        asm_path = os.path.join(working_dir, f'{basename}.S')
-        bin_path = os.path.join(working_dir, f'{basename}.exe')
-
-        assert check_executables_exist(['gtirb-pprinter']), "gtirb-pprinter not found"
-
-        gen_args = []
-        if gen_assembly:
-            gen_args += ['--asm', asm_path]
-        if gen_binary:
-            gen_args += ['--binary', bin_path]
-
-        cmd = ["gtirb-pprinter", ir_file] + gen_args
-        run_cmd(cmd)
-
-        if gen_assembly:
-            log.info(f'Generated assembly saved to: {asm_path}')
-        if gen_binary:
-            log.info(f'Generated binary saved to: {bin_path}')
-
+        pass
 
 class WindowsUtils(ArchUtils):
     @staticmethod
@@ -240,6 +187,7 @@ class WindowsUtils(ArchUtils):
 
         return def_file_mappings
 
+    @staticmethod
     def asm_fix_lib_names(asm: str, def_files: dict[str, str]) -> str:
         '''
         Modify GTIRB generated assembly to link to our lib files.
@@ -276,6 +224,7 @@ class WindowsUtils(ArchUtils):
         asm = asm.replace(dummy_lib_include, '')
         return asm
 
+    @staticmethod
     def asm_fix_func_name_collisions(asm: str, names: list[str]) -> str:
         '''
         Ignore keywords that conflict with names of functions.
@@ -294,7 +243,7 @@ class WindowsUtils(ArchUtils):
         return ignore_keywords + asm
 
     @staticmethod
-    def generate(ir_file: str, output: str, working_dir: str, ir: gtirb.IR,
+    def generate(output: str, working_dir: str, ir: gtirb.IR,
                     gen_assembly: Optional[bool]=False,
                     gen_binary: Optional[bool]=False,
                     obj_link: Optional[list[str]]=None):
@@ -306,7 +255,6 @@ class WindowsUtils(ArchUtils):
         We use our own build process as gtirb-pprinter's PE binary printing doesn't
         allow us to link our own static libraries into the generated binary.
 
-        :param ir_file: File location of GTIRB IR to generate from
         :param ir: GTIRB IR being printed (loaded version of ir_file)
         :param output: File location of output assembly and/or binary. '.exe' will
             be added for output binary and '.S' for assembly.
@@ -315,11 +263,16 @@ class WindowsUtils(ArchUtils):
         :param gen_binary: True if generating binary
         :param obj_link: Path of object to link into instrumented binary.
         """
-        assert gen_assembly or gen_binary, \
-            "At least one of gen_assembly or gen_binary must be true"
-
         is_64bit = ir.modules[0].isa == gtirb.Module.ISA.X64
         basename = os.path.basename(output)
+        ir_file = os.path.join(working_dir, f'{basename}.gtirb')
+
+        # Generate IR
+        ir.save_protobuf(ir_file)
+        log.info(f'Instrumented IR saved to: {ir_file}')
+
+        assert gen_assembly or gen_binary, \
+            "At least one of gen_assembly or gen_binary must be true"
 
         # Generate assembly (required for binary generation as well)
         assert check_executables_exist(['gtirb-pprinter']), "gtirb-pprinter not found"

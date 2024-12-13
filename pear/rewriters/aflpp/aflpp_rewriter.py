@@ -6,6 +6,7 @@ import shutil
 import pathlib
 import logging
 import argparse
+import textwrap
 import importlib
 
 from collections import OrderedDict
@@ -32,15 +33,15 @@ from ..rewriter import Rewriter
 
 log = logging.getLogger(__name__)
 
-class WinAFLRewriter(Rewriter):
+class AFLPlusPlusRewriter(Rewriter):
     """
-    This class implements WinAFL instrumentation on x86 and x64 Windows binaries.
+    This class implements AFL++ instrumentation on x64 Linux binaries.
     """
     @staticmethod
     def build_parser(parser: argparse._SubParsersAction):
-        parser = parser.add_parser(WinAFLRewriter.name(),
-                                   description= "Add WinAFL instrumentation to 32-bit or 64-bit Windows binaries.",
-                                   help='Add WinAFL instrumentation',
+        parser = parser.add_parser(AFLPlusPlusRewriter.name(),
+                                   description= "Add AFL++ instrumentation to 64-bit Linux binaries.",
+                                   help='Add AFL++ instrumentation',
                                    add_help=False)
 
         def is_hex_address(loc):
@@ -76,9 +77,114 @@ class WinAFLRewriter(Rewriter):
             metavar=("LIB1", "LIB2")
         )
 
+
+        required.add_argument(
+            '--patch-dir', required=True,
+            help="Directory of asm support functions"
+        )
+
+        # deferred initialisation 
+        required.add_argument(
+            '--forkserver-init-address', required=False,
+            help="Address to initialise forkserver"
+        )
+        required.add_argument(
+            '--forkserver-init-func', required=False,
+            help="Function in which to initialise forkserver"
+        )
+
+        # persistent mode args
+        required.add_argument(
+            '--persistent-mode-address', required=False,
+            help="Function address to start persistent mode"
+        )
+        required.add_argument(
+            '--persistent-mode-func', required=False,
+            help="Function in which to apply persistent mode"
+        )
+        required.add_argument(
+            '--persistent-mode-count', required=False,
+            help="Persistent mode count"
+        )
+
+        # sharedmem
+        required.add_argument(
+            '--sharedmem-hook-location', required=False,
+            help=textwrap.dedent('''\
+            Location to insert sharedmem hook. Can be one of
+              PERSISTENT_LOOP
+                Calls the hook immediately prior to the start of the persistent loop
+              FORKSERVER_INIT
+                Calls the hook immediately after the forkserver initialisation
+                (as the child process begins)
+              <address>
+                Calls the hook at specified address
+            ''')
+        )
+        required.add_argument(
+            '--sharedmem-hook-func-name', required=False,
+            help="Name of function to be called as sharedmem hook"
+        )
+
+        # args =  parser.parse_args()
+        #
+        # args.is_hook_loc_persistent = False
+        # args.is_hook_loc_init = False
+        # args.is_hook_loc_address = False
+        # args.hook_loc_address = None
+        # 
+        # args.is_deferred = False
+        # args.is_persistent = False
+        # args.is_sharedmem_fuzzing = False
+        #
+        # if args.sharedmem_hook_location:
+        #     args.is_sharedmem_fuzzing = True
+        #
+        #     if not args.sharedmem_hook_func_name:
+        #         args.sharedmem_hook_func_name = "__afl_rewrite_sharedmem_hook"
+        #
+        #     loc = args.sharedmem_hook_location
+        #
+        #     if loc == 'PERSISTENT_LOOP':
+        #         args.is_hook_loc_persistent = True
+        #     elif loc == 'FORKSERVER_INIT':
+        #         args.is_hook_loc_init = True
+        #     elif loc.startswith('0x'):
+        #         args.is_hook_loc_address = True
+        #         args.hook_loc_address = int(loc, 16)
+        #     else:
+        #         print(f'{bcolors.FAIL}ERROR:{bcolors.ENDC} Unknown option "{loc}" for --shardemem-hook-location')
+        #         exit(1)
+        #
+        # if args.forkserver_init_func and args.forkserver_init_address:
+        #     print(f"{bcolors.FAIL}ERROR:{bcolors.ENDC} Must only specify one of either forkserver init function or address.")
+        #     exit(1)
+        #
+        # if args.persistent_mode_address and args.persistent_mode_func:
+        #     print(f"{bcolors.FAIL}ERROR:{bcolors.ENDC} Must only specify one of either persistent init function or address.")
+        #     exit(1)
+        #
+        # if args.persistent_mode_count:
+        #     args.persistent_mode_count = int(args.persistent_mode_count)
+        #
+        # if not args.persistent_mode_count and (args.persistent_mode_address or args.persistent_mode_func):
+        #     print(f"{bcolors.WARNING}WARNING:{bcolors.ENDC} Persistent mode count not specified. Setting to 10000")
+        #     args.persistent_mode_count = 10000
+        #
+        # if args.persistent_mode_address:
+        #     args.persistent_mode_address = int(args.persistent_mode_address, 16)
+        #
+        # if args.forkserver_init_address:
+        #     args.forkserver_init_address = int(args.forkserver_init_address, 16)
+        #
+        # if args.forkserver_init_address or args.forkserver_init_func:
+        #     args.is_deferred = True
+        # if args.persistent_mode_address or args.persistent_mode_func:
+        #     args.is_persistent = True
+
     @staticmethod
     def name():
-        return 'WinAFL'
+        return 'AFL++'
 
     def __init__(self, ir: gtirb.IR, args: argparse.Namespace,
                  mappings: OrderedDict[int, uuid.UUID]):
@@ -110,10 +216,15 @@ class WinAFLRewriter(Rewriter):
                 assert False, (f'Can\'t parse "{func}" as address, please provide hex address')
 
         # check compiler right version
+        assert check_executables_exist(['cl']), \
+            "MSVC build tools not found, are you running in a developer command prompt?"
+        cl_out, _ = run_cmd(["cl"], print=False)
         if self.is_64bit:
-            WindowsX86Utils.check_compiler_exists()
+            assert b"for x64" in cl_out, \
+                "64-bit MSVC build tools must be used to generate 64-bit instrumented binary"
         else:
-            WindowsX64Utils.check_compiler_exists()
+            assert b"for x86" in cl_out, \
+                "32-bit MSVC build tools must be used to generate 32-bit instrumented binary"
         log.info(f"{'64-bit' if self.is_64bit else '32-bit'} MSVC build tools found.")
 
     def rewrite(self) -> gtirb.IR:
@@ -133,14 +244,15 @@ class WinAFLRewriter(Rewriter):
 
         return self.ir
 
-    def generate(self, output: str, working_dir: str, *args,
+    def generate(self,
+                 ir_file: str, output: str, working_dir: str, *args,
                  gen_assembly: Optional[bool]=False,
                  gen_binary: Optional[bool]=False,
                  **kwargs):
 
         if not gen_binary:
-            WindowsUtils.generate(output, working_dir, self.ir,
-                                  gen_assembly=gen_assembly)
+            WindowsUtils.generate(ir_file, output, working_dir, self.ir,
+                                     gen_assembly=gen_assembly)
             return
 
         # As we are generating binary, we need to build the instrumentation
@@ -160,8 +272,8 @@ class WinAFLRewriter(Rewriter):
         # Now build binary, linking static object and its dependencies.
         to_link = ["vcruntime.lib", "ucrt.lib", "kernel32.lib", "user32.lib",
                    static_obj_fname] + self.extra_link
-        WindowsUtils.generate(output, working_dir, self.ir,
-                              gen_binary=gen_binary, obj_link=to_link)
+        WindowsUtils.generate(ir_file, output, working_dir, self.ir,
+                                 gen_binary=gen_binary, obj_link=to_link)
 
 class AddWinAFLDataPass(Pass):
     def __init__(self, is_64bit: bool):
