@@ -53,11 +53,7 @@ class Rewriter:
         :param gen_assembly: True if generating assembly
         :param gen_binary: True if generating binary
         """
-        # Calls generic generation method.
-        # More advanced rewriters that need to do things like compiling and 
-        # linking in their own compiled objects will need to override this.
-        ArchUtils.generate(output, working_dir, gen_assembly=gen_assembly,
-                           gen_binary=gen_binary)
+        raise NotImplementedError
 
     @staticmethod
     def build_parser(parser: argparse._SubParsersAction):
