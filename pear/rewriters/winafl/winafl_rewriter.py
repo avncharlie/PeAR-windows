@@ -111,9 +111,9 @@ class WinAFLRewriter(Rewriter):
 
         # check compiler right version
         if self.is_64bit:
-            WindowsX86Utils.check_compiler_exists()
-        else:
             WindowsX64Utils.check_compiler_exists()
+        else:
+            WindowsX86Utils.check_compiler_exists()
         log.info(f"{'64-bit' if self.is_64bit else '32-bit'} MSVC build tools found.")
 
     def rewrite(self) -> gtirb.IR:
