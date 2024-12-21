@@ -1,4 +1,3 @@
-from io import StringIO
 import uuid
 import pathlib
 import logging
@@ -106,8 +105,7 @@ be possible."""
 
         return self.ir
 
-    def generate(self,
-                 ir_file: str, output: str, working_dir: str, *args,
+    def generate(self, output: str, working_dir: str, *args,
                  gen_assembly: Optional[bool]=False,
                  gen_binary: Optional[bool]=False,
                  **kwargs):
@@ -117,7 +115,7 @@ be possible."""
                                   gen_binary=gen_binary, obj_link=self.link)
         if self.is_linux:
             # pass
-            ArchUtils.generate(output, working_dir, self.ir,
+            LinuxUtils.generate(output, working_dir, self.ir,
                                gen_assembly=gen_assembly,
                                gen_binary=gen_binary, obj_link=self.link)
         else:
