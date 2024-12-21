@@ -228,15 +228,21 @@ class LinuxUtils(ArchUtils):
         if not gen_binary:
             return
 
-        # get version info
-        # lib: {version: [(sym, type)]}
+        # Get version info:
+        #  - store versioned symbols: lib: {version: [(sym, type)]}
+        #  - keep track of non-versioned symbols: [sym, type]
         versioned_syms: dict[str, dict[str, list[tuple[Symbol, str]]]] = {}
+        nonversioned_syms: list[tuple[Symbol, str]] = []
+        external_libraries: list[str] = []
+
+        assert len(ir.modules) == 1, "PeAR only supports one module GTIRB IRs"
         for module in ir.modules:
             # Get data from aux tables
             symbol_to_version_map: dict[Symbol, tuple[int, bool]] # {SYMBOL: (ID, is_hidden)}
             strong_versioned_syms: dict[Symbol, int] = {} # versioned sym:  ID
             lib_version_imports: dict[str, dict[int, str]] = {} # lib: {ID: version}
             elf_symbol_info = _auxdata.elf_symbol_info.get_or_insert(module)
+            external_libraries = _auxdata.libraries.get_or_insert(module)
             symbol_forwarding = _auxdata.symbol_forwarding.get_or_insert(module)
             elf_symbol_versions = module.aux_data['elfSymbolVersions'].data
             sym_version_defs, lib_version_imports, symbol_to_version_map = elf_symbol_versions
@@ -272,18 +278,58 @@ class LinuxUtils(ArchUtils):
                 _, b_type, _, _, _ = elf_symbol_info[before]
                 _, a_type, _, _, _ = elf_symbol_info[after]
                 if b_type == a_type and after not in strong_versioned_syms:
-                    print(before.name, after.name)
+                    nonversioned_syms.append((after, a_type))
 
         LinuxUtils.check_compiler_exists()
+
+        # We need to put unversioned symbol definitions somewhere...
+        # We could weaken them, but I don't want to do that, as that would
+        # require the objcopy tool from binutils, and I don't want extra
+        # dependencies.
+        # So we simply add them to the first library we generate, versioned or
+        # non-versioned. As non-versioned symbols aren't tied to library name,
+        # it doesn't matter what library we generate them under
+        text = '.section .text\n\n'
+        data = '.section .data\n\n'
+        for sym, symtype in nonversioned_syms:
+            name = sym.name
+            if symtype == 'FUNC':
+                text += LinuxUtils.generate_asm_external_symbol_stub(name, True)
+            elif symtype == 'OBJECT':
+                data += LinuxUtils.generate_asm_external_symbol_stub(name, False)
+        non_versioned_stubs = text + data
+        added_non_versioned_stubs = False
 
         # Generate stub libraries 
         dummy_lib_to_asm_version_map: dict[str, tuple[str, str]] = \
                 LinuxUtils.generate_versioned_dummy_libs(versioned_syms, working_dir)
         dummy_libs = []
         for lib, (asm, version_map) in dummy_lib_to_asm_version_map.items():
+            if not added_non_versioned_stubs:
+                with open(asm, "a") as f:
+                    f.write(non_versioned_stubs)
+                    added_non_versioned_stubs = True
             dummy_lib = os.path.join(working_dir, lib)
             dummy_libs.append(lib)
             cmd = ['gcc', '-shared', '-fPIC', asm, f'-Wl,--version-script={version_map}', '-o', dummy_lib, '-nodefaultlibs']
+            run_cmd(cmd)
+
+        # Generate non-versioned stub libraries
+        non_versioned_libs = []
+        print(external_libraries)
+        print(dummy_libs)
+        for lib in external_libraries:
+            if lib not in dummy_libs:
+                non_versioned_libs.append(lib)
+        for lib in non_versioned_libs:
+            libpath = os.path.join(working_dir, lib) + '.S'
+            with open(libpath, 'w') as f:
+                if not added_non_versioned_stubs:
+                    f.write(non_versioned_stubs)
+                    added_non_versioned_stubs = True
+            dummy_lib = os.path.join(working_dir, lib)
+            dummy_libs.append(lib)
+            cmd = ['gcc', '-shared', '-fPIC', libpath, '-o', dummy_lib, '-nodefaultlibs']
             run_cmd(cmd)
 
         # Generate object from instrumented assembly
@@ -299,8 +345,10 @@ class LinuxUtils(ArchUtils):
         run_cmd(cmd, working_dir=working_dir)
 
         # TODO: 
-        #   differentiate between data and functions
-        #   create dummy so for all to avoid using patchelf
+        #   c++
+        #   no-pie support
+        #   custom rpath
+        #   support non-exec stack
 
 class WindowsUtils(ArchUtils):
     @staticmethod
