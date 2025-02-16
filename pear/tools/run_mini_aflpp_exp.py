@@ -86,9 +86,9 @@ if __name__ == '__main__':
                 cmd = f'{no_affinity} AFL_NO_UI=1 timeout {timeout} {taskset} afl-fuzz -i {corpus} -o {out_dir} -- {binary} @@ &'
                 cmds.append(cmd)
                 count += 1
-        # don't background last one, so script blocks until they are all run
-        cmds[-1] = cmds[-1][:-1]
         script += '\n'.join(cmds)
+        # wait until all trials finish
+        script += '\nwait'
 
         print('Generated script:')
         print(script)
@@ -102,8 +102,6 @@ if __name__ == '__main__':
 
         # run!
         os.system(f'{script_path}')
-
-        time.sleep(5)
 
         print('---------------------------')
         for bin, out_folders in out_dirs.items():
