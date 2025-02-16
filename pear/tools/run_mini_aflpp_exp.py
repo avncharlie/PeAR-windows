@@ -1,6 +1,7 @@
 import os
 import sys
 import stat
+import time
 import pathlib
 import argparse
 import tempfile
@@ -101,6 +102,8 @@ if __name__ == '__main__':
 
         # run!
         os.system(f'{script_path}')
+
+        time.sleep(5)
 
         print('---------------------------')
         for bin, out_folders in out_dirs.items():
