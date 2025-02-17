@@ -1,6 +1,7 @@
 import os
 import re
 import argparse
+import statistics
 from collections import defaultdict
 
 def main():
@@ -48,7 +49,7 @@ def main():
 
     for target, values in results.items():
         if values:
-            avg = sum(values) / len(values)
+            avg = statistics.fmean(values)
             print(f"{target}: {avg:.2f} execs/sec (from {len(values)} trials)")
         else:
             print(f"{target}: No valid execs_per_sec data found.")
