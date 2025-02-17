@@ -281,27 +281,10 @@ class AddAFLPlusPlusPass(Pass):
                         " For faster fuzzing, specify an initialisation point.")
 
     @staticmethod
-    def trace_asm_(block_id: int):
+    def trace_asm(block_id: int) -> str:
         '''
         ASM to call tracing function
-        '''
-        return f'''
-            lea    rsp,[rsp-0x98]
-            mov    QWORD PTR [rsp],rdx
-            mov    QWORD PTR [rsp+0x8],rcx
-            mov    QWORD PTR [rsp+0x10],rax
-            mov    rcx,{hex(block_id)}
-            call   __afl_trace
-            mov    rax,QWORD PTR [rsp+0x10]
-            mov    rcx,QWORD PTR [rsp+0x8]
-            mov    rdx,QWORD PTR [rsp]
-            lea    rsp,[rsp+0x98]
-    '''
-
-    @staticmethod
-    def trace_asm(block_id: int):
-        '''
-        ASM to call tracing function
+        :param block_id: unique ID of block patch is being generated for
         '''
         return f'''
             # Using lea + mov as it might be faster than consecutive pushes
@@ -321,49 +304,13 @@ class AddAFLPlusPlusPass(Pass):
 
 
     @staticmethod
-    def trace_func_asm_300(never_zero: bool = False):
+    def trace_func_asm(never_zero: bool = False) -> str:
         '''
         Tracing function
         Heavily inspired via afl-as assembly patches. 
+        Small tweak to remove rdx dependency (makes it very slightly faster)
         See insp here: https://github.com/mirrorer/afl/blob/master/afl-as.h
-        :param block_id: unique ID of block patch is being generated for
-        '''
-        inc_counter = 'inc byte ptr [rcx]'
-        if never_zero:
-            inc_counter = textwrap.dedent('''\
-                add byte ptr [rcx], 0x1
-                adc byte ptr [rcx], 0x0 # map[index] = 1 on overflow
-            ''')
-        return f'''
-            # Store flags on stack (faster than pushf)
-            lahf
-            seto al
-
-            # Assumed rcx contains block id
-            # rcx = __afl_area_ptr[prev_loc XOR current_loc]
-            xor rcx, qword ptr [rip + __afl_prev_loc]
-            xor qword ptr [rip + __afl_prev_loc], rcx # __afl_prev_loc = current_loc (prev_loc XOR current_loc XOR prev_loc = current_loc)
-            add rcx, qword ptr [rip + __afl_area_ptr]
-
-            # __afl_prev_loc = current_loc >> 1
-            shr QWORD PTR [rip + __afl_prev_loc], 1
-
-            # __afl_area_ptr[prev_loc XOR current_loc]++
-            {inc_counter}
-
-            # Return
-            add al,0x7f
-            sahf
-            ret
-        '''
-
-    @staticmethod
-    def trace_func_asm(never_zero: bool = False):
-        '''
-        Tracing function
-        Heavily inspired via afl-as assembly patches. 
-        See insp here: https://github.com/mirrorer/afl/blob/master/afl-as.h
-        :param block_id: unique ID of block patch is being generated for
+        :param never_zero: if counters should wrap to 1 instead of 0
         '''
         inc_counter = 'inc byte ptr [rcx]'
         if never_zero:
@@ -376,15 +323,11 @@ class AddAFLPlusPlusPass(Pass):
             lahf
             seto al
             
-            # Store afl shared memory area in rdx
-            # mov rdx,[rip + __afl_area_ptr]
-            
-            # Record path in bitmap
-            xor rcx,QWORD PTR [rip + __afl_prev_loc]
-            xor QWORD PTR [rip + __afl_prev_loc],rcx
-            shr QWORD PTR [rip + __afl_prev_loc],1
-            add rcx, qword ptr [rip + __afl_area_ptr]
-            inc BYTE PTR [rcx]
+            xor rcx, qword ptr [rip + __afl_prev_loc]       # rcx = curr_loc ^ prev_loc 
+            xor qword ptr [rip + __afl_prev_loc], rcx       # prev_loc = curr_loc
+            shr qword ptr [rip + __afl_prev_loc], 1         # prev_loc = curr_loc >> 1
+            add rcx, qword ptr [rip + __afl_area_ptr]       # rcx = __afl_area_ptr[curr_loc ^ prev_loc]
+            {inc_counter}                                   # __afl_area_ptr[curr_loc ^ prev_loc]++
             
             # Return
             add al,0x7f

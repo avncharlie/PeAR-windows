@@ -114,7 +114,7 @@ if __name__ == '__main__':
             avg = statistics.fmean(speeds)
             print(f'{bin}: {avg} execs per second')
 
-        input('Press enter to delete the temp dir')
+        input('Press enter to delete the temp dir ...')
 
 '''
 AFL_NO_UI=1 timeout 4 taskset -c 0 ~/AFLplusplus/afl-fuzz -i in/befunge-files/examples -o afl-out -- in/befunge.AFL++.exe @@ &
