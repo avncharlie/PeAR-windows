@@ -81,7 +81,7 @@ if __name__ == '__main__':
                     taskset = f'taskset -c {curr_core}'
                     no_affinity = 'AFL_NO_AFFINITY=1' # need this as we are picking cores not AFL
                     curr_core += 1
-                out_dir = os.path.join(out, f'afl-out-{count}')
+                out_dir = os.path.join(out, f'afl-out-{os.path.basename(binary)}-{t}')
                 out_dirs[binary].append(out_dir)
                 cmd = f'{no_affinity} AFL_NO_UI=1 timeout {timeout} {taskset} afl-fuzz -i {corpus} -o {out_dir} -- {binary} @@ &'
                 cmds.append(cmd)
@@ -93,7 +93,7 @@ if __name__ == '__main__':
         print('Generated script:')
         print(script)
 
-        input('Press enter to continue... ')
+        input('Press enter to run... ')
 
         # write script and make executable
         script_path = os.path.join(out, 'run_exp.sh')
