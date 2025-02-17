@@ -281,7 +281,7 @@ class AddAFLPlusPlusPass(Pass):
                         " For faster fuzzing, specify an initialisation point.")
 
     @staticmethod
-    def trace_asm(block_id: int):
+    def trace_asm_(block_id: int):
         '''
         ASM to call tracing function
         '''
@@ -299,7 +299,7 @@ class AddAFLPlusPlusPass(Pass):
     '''
 
     @staticmethod
-    def trace_asm_300(block_id: int):
+    def trace_asm(block_id: int):
         '''
         ASM to call tracing function
         '''
@@ -377,13 +377,14 @@ class AddAFLPlusPlusPass(Pass):
             seto al
             
             # Store afl shared memory area in rdx
-            mov rdx,[rip + __afl_area_ptr]
+            # mov rdx,[rip + __afl_area_ptr]
             
             # Record path in bitmap
             xor rcx,QWORD PTR [rip + __afl_prev_loc]
             xor QWORD PTR [rip + __afl_prev_loc],rcx
             shr QWORD PTR [rip + __afl_prev_loc],1
-            inc BYTE PTR [rdx+rcx*1]
+            add rcx, qword ptr [rip + __afl_area_ptr]
+            inc BYTE PTR [rcx]
             
             # Return
             add al,0x7f
