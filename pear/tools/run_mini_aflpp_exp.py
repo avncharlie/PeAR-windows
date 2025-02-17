@@ -76,10 +76,10 @@ if __name__ == '__main__':
             out_dirs[binary] = []
             for t in range(trials):
                 taskset = ''
-                no_affinity = 'AFL_NO_AFFINITY=1'
+                no_affinity = ''
                 if start_core != None:
                     taskset = f'taskset -c {curr_core}'
-                    no_affinity = ''
+                    no_affinity = 'AFL_NO_AFFINITY=1' # need this as we are picking cores not AFL
                     curr_core += 1
                 out_dir = os.path.join(out, f'afl-out-{count}')
                 out_dirs[binary].append(out_dir)
