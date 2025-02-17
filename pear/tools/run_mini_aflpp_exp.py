@@ -90,8 +90,10 @@ if __name__ == '__main__':
         # wait until all trials finish
         script += '\nwait'
 
-        print('Generated script:')
+        print('Generated experiment script:')
+        print('-'*80)
         print(script)
+        print('-'*80)
 
         input('Press enter to run... ')
 
@@ -105,7 +107,7 @@ if __name__ == '__main__':
         # run!
         os.system(f'{script_path}')
 
-        print('---------------------------')
+        print('-'*80)
         for bin, out_folders in out_dirs.items():
             speeds = []
             for f in out_folders:
