@@ -295,12 +295,46 @@ class AddAFLPlusPlusPass(Pass):
             mov qword ptr [rsp+0x8], rax # rax clobbered by lahf inside func
 
             mov rcx, {hex(block_id)}
+
+            lahf
+            seto al
+            
+            xor rcx, qword ptr [rip + __afl_prev_loc]       # rcx = curr_loc ^ prev_loc 
+            xor qword ptr [rip + __afl_prev_loc], rcx       # prev_loc = curr_loc
+            shr qword ptr [rip + __afl_prev_loc], 1         # prev_loc = curr_loc >> 1
+            add rcx, qword ptr [rip + __afl_area_ptr]       # rcx = __afl_area_ptr[curr_loc ^ prev_loc]
+            inc byte ptr [rcx]                              # __afl_area_ptr[curr_loc ^ prev_loc]++
+            
+            # Return
+            add al,0x7f
+            sahf
+
+            mov rax, qword ptr [rsp+0x8]
+            mov rcx, qword ptr [rsp]
+            lea rsp, [rsp+0x90]
+        '''
+
+    @staticmethod
+    def trace_asm_(block_id: int) -> str:
+        '''
+        ASM to call tracing function
+        :param block_id: unique ID of block patch is being generated for
+        '''
+        return f'''
+            # Using lea + mov as it might be faster than consecutive pushes
+            # Subtract stack past red-zone (keep it unmodified)
+            # red zone = 128 = 0x80. we push two registers, so sub 0x90
+            lea rsp,[rsp-0x90]
+            mov qword ptr [rsp], rcx
+            mov qword ptr [rsp+0x8], rax # rax clobbered by lahf inside func
+
+            mov rcx, {hex(block_id)}
             call {AFL_TRACE_FUNC}
 
             mov rax, qword ptr [rsp+0x8]
             mov rcx, qword ptr [rsp]
             lea rsp, [rsp+0x90]
-    '''
+        '''
 
 
     @staticmethod
