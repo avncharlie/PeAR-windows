@@ -93,6 +93,8 @@ if __name__ == '__main__':
         print('Generated script:')
         print(script)
 
+        input('Press enter to continue... ')
+
         # write script and make executable
         script_path = os.path.join(out, 'run_exp.sh')
         with open(script_path, 'w') as f:
