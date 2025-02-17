@@ -286,6 +286,24 @@ class AddAFLPlusPlusPass(Pass):
         ASM to call tracing function
         '''
         return f'''
+            lea    rsp,[rsp-0x98]
+            mov    QWORD PTR [rsp],rdx
+            mov    QWORD PTR [rsp+0x8],rcx
+            mov    QWORD PTR [rsp+0x10],rax
+            mov    rcx,{hex(block_id)}
+            call   __afl_trace
+            mov    rax,QWORD PTR [rsp+0x10]
+            mov    rcx,QWORD PTR [rsp+0x8]
+            mov    rdx,QWORD PTR [rsp]
+            lea    rsp,[rsp+0x98]
+    '''
+
+    @staticmethod
+    def trace_asm_300(block_id: int):
+        '''
+        ASM to call tracing function
+        '''
+        return f'''
             # Using lea + mov as it might be faster than consecutive pushes
             # Subtract stack past red-zone (keep it unmodified)
             # red zone = 128 = 0x80. we push two registers, so sub 0x90
@@ -301,8 +319,9 @@ class AddAFLPlusPlusPass(Pass):
             lea rsp, [rsp+0x90]
     '''
 
+
     @staticmethod
-    def trace_func_asm(never_zero: bool = False):
+    def trace_func_asm_300(never_zero: bool = False):
         '''
         Tracing function
         Heavily inspired via afl-as assembly patches. 
@@ -332,6 +351,40 @@ class AddAFLPlusPlusPass(Pass):
             # __afl_area_ptr[prev_loc XOR current_loc]++
             {inc_counter}
 
+            # Return
+            add al,0x7f
+            sahf
+            ret
+        '''
+
+    @staticmethod
+    def trace_func_asm(never_zero: bool = False):
+        '''
+        Tracing function
+        Heavily inspired via afl-as assembly patches. 
+        See insp here: https://github.com/mirrorer/afl/blob/master/afl-as.h
+        :param block_id: unique ID of block patch is being generated for
+        '''
+        inc_counter = 'inc byte ptr [rcx]'
+        if never_zero:
+            inc_counter = textwrap.dedent('''\
+                add byte ptr [rcx], 0x1
+                adc byte ptr [rcx], 0x0 # map[index] = 1 on overflow
+            ''')
+        return f'''
+            # Store flags on stack (apparently faster than pushf)
+            lahf
+            seto al
+            
+            # Store afl shared memory area in rdx
+            mov rdx,[rip + __afl_area_ptr]
+            
+            # Record path in bitmap
+            xor rcx,QWORD PTR [rip + __afl_prev_loc]
+            xor QWORD PTR [rip + __afl_prev_loc],rcx
+            shr QWORD PTR [rip + __afl_prev_loc],1
+            inc BYTE PTR [rdx+rcx*1]
+            
             # Return
             add al,0x7f
             sahf

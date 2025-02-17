@@ -7,11 +7,6 @@ import argparse
 import tempfile
 import statistics
 
-# yuck
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
-from pear.utils import run_cmd
-
 def parse_args():
     parser = argparse.ArgumentParser(description='Setup and run AFL++ experiment.')
     def path_exists(f):
