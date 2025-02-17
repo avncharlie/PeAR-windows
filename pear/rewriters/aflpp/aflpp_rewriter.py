@@ -38,6 +38,7 @@ from ..rewriter import Rewriter
 
 log = logging.getLogger(__name__)
 
+AFL_TRACE_FUNC = '__afl_trace'
 
 class AFLPlusPlusRewriter(Rewriter):
     """
@@ -280,9 +281,30 @@ class AddAFLPlusPlusPass(Pass):
                         " For faster fuzzing, specify an initialisation point.")
 
     @staticmethod
-    def inline_trace(block_id: int, never_zero: bool = False):
+    def trace_asm(block_id: int):
         '''
-        Generate inline tracing code patch
+        ASM to call tracing function
+        '''
+        return f'''
+            # Using lea + mov as it might be faster than consecutive pushes
+            # Subtract stack past red-zone (keep it unmodified)
+            # red zone = 128 = 0x80. we push two registers, so sub 0x90
+            lea rsp,[rsp-0x90]
+            mov qword ptr [rsp], rcx
+            mov qword ptr [rsp+0x8], rax # rax clobbered by lahf inside func
+
+            mov rcx, {hex(block_id)}
+            call {AFL_TRACE_FUNC}
+
+            mov rax, qword ptr [rsp+0x8]
+            mov rcx, qword ptr [rsp]
+            lea rsp, [rsp+0x90]
+    '''
+
+    @staticmethod
+    def trace_func_asm(never_zero: bool = False):
+        '''
+        Tracing function
         Heavily inspired via afl-as assembly patches. 
         See insp here: https://github.com/mirrorer/afl/blob/master/afl-as.h
         :param block_id: unique ID of block patch is being generated for
@@ -294,25 +316,18 @@ class AddAFLPlusPlusPass(Pass):
                 adc byte ptr [rcx], 0x0 # map[index] = 1 on overflow
             ''')
         return f'''
-            # Subtract stack past red-zone (keep it unmodified)
-            # red zone = 128 = 0x80. we push two registers, so sub 0x90
-            .align 8
-            lea rsp,[rsp-0x90]
-            # using mov as it might be faster than consecutive pushes
-            mov qword ptr [rsp], rcx
-            mov qword ptr [rsp+0x8], rax # rax clobbered by lahf
-
             # Store flags on stack (faster than pushf)
             lahf
             seto al
 
+            # Assumed rcx contains block id
             # rcx = __afl_area_ptr[prev_loc XOR current_loc]
-            mov rcx, {hex(block_id)}
             xor rcx, qword ptr [rip + __afl_prev_loc]
+            xor qword ptr [rip + __afl_prev_loc], rcx # __afl_prev_loc = current_loc (prev_loc XOR current_loc XOR prev_loc = current_loc)
             add rcx, qword ptr [rip + __afl_area_ptr]
 
-            # prev_loc = current_loc >> 1
-            mov qword ptr [rip + __afl_prev_loc], {hex(block_id >> 1)}
+            # __afl_prev_loc = current_loc >> 1
+            shr QWORD PTR [rip + __afl_prev_loc], 1
 
             # __afl_area_ptr[prev_loc XOR current_loc]++
             {inc_counter}
@@ -320,9 +335,7 @@ class AddAFLPlusPlusPass(Pass):
             # Return
             add al,0x7f
             sahf
-            mov rax, qword ptr [rsp+0x8]
-            mov rcx, qword ptr [rsp]
-            lea rsp, [rsp+0x90]
+            ret
         '''
 
     def begin_module(self, module, functions, rewriting_ctx):
@@ -355,6 +368,17 @@ class AddAFLPlusPlusPass(Pass):
             rewriting_ctx
         )
 
+        # Insert trace function
+        rewriting_ctx.register_insert_function(
+            AFL_TRACE_FUNC,
+            Patch.from_function(
+                partial (
+                    lambda nz, _: AddAFLPlusPlusPass.trace_func_asm(nz),
+                self.never_zero),
+                Constraints(x86_syntax=X86Syntax.INTEL)
+            )
+        )
+
         instr_count = 0
         for func in functions:
             # don't instrument entrypoint as we need to setup stuff before then
@@ -365,20 +389,15 @@ class AddAFLPlusPlusPass(Pass):
                 for blocklist in blocks:
                     block_id = random.getrandbits(16)
 
-                    # create inline or function call patch
-                    if self.inline_tracing:
-                        patch = Patch.from_function(
+                    # create trace patch
+                    rewriting_ctx.register_insert(
+                        SingleBlockScope(blocklist[0], BlockPosition.ENTRY),
+                        Patch.from_function(
                             partial(
-                                lambda id, _: AddAFLPlusPlusPass.inline_trace(id, self.never_zero),
+                                lambda id, _: AddAFLPlusPlusPass.trace_asm(id),
                             block_id),
                             Constraints(x86_syntax=X86Syntax.INTEL)
                         )
-                    else:
-                        raise NotImplementedError
-
-                    rewriting_ctx.register_insert(
-                        SingleBlockScope(blocklist[0], BlockPosition.ENTRY),
-                        patch
                     )
                     instr_count += 1
 
