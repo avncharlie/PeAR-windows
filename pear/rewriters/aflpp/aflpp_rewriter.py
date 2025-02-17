@@ -77,10 +77,10 @@ class AFLPlusPlusRewriter(Rewriter):
 
         # Inlined tracing
         parser.add_argument(
-            '--no-inlined-tracing', default=False, action='store_true', required=False,
+            '--inlined-tracing', default=False, action='store_true', required=False,
             help=textwrap.dedent('''\
-                Don't use inline tracing. Makes binary much smaller and easier
-                to analyse, but (probably) slower. Default: false
+                Use inline tracing. Makes binary bigger and a bit slower. Don't
+                use this. Default: false
             ''')
         )
 
@@ -147,7 +147,7 @@ class AFLPlusPlusRewriter(Rewriter):
         self.module = ir.modules[0]
         self.addr_cb_map = mappings
 
-        self.inline: bool = not args.no_inlined_tracing
+        self.inline: bool = args.inlined_tracing
         self.never_zero: bool = args.never_zero
 
         self.pers_mode_cnt: int | None = args.persistent_mode_count
@@ -281,11 +281,16 @@ class AddAFLPlusPlusPass(Pass):
                         " For faster fuzzing, specify an initialisation point.")
 
     @staticmethod
-    def trace_asm(block_id: int) -> str:
+    def trace_asm(block_id: int, inline: bool, never_zero: bool = False) -> str:
         '''
-        ASM to call tracing function
+        Tracing asm.
+        :param inline: should the trace be inlined
+        :param never_zero: if inlined, should counter wrap to 1 instead of 0
         :param block_id: unique ID of block patch is being generated for
         '''
+        trace = f'call {AFL_TRACE_FUNC}'
+        if inline:
+            trace = AddAFLPlusPlusPass.tracing_asm(inline=True, never_zero=never_zero)
         return f'''
             # Using lea + mov as it might be faster than consecutive pushes
             # Subtract stack past red-zone (keep it unmodified)
@@ -295,55 +300,25 @@ class AddAFLPlusPlusPass(Pass):
             mov qword ptr [rsp+0x8], rax # rax clobbered by lahf inside func
 
             mov rcx, {hex(block_id)}
-
-            lahf
-            seto al
-            
-            xor rcx, qword ptr [rip + __afl_prev_loc]       # rcx = curr_loc ^ prev_loc 
-            xor qword ptr [rip + __afl_prev_loc], rcx       # prev_loc = curr_loc
-            shr qword ptr [rip + __afl_prev_loc], 1         # prev_loc = curr_loc >> 1
-            add rcx, qword ptr [rip + __afl_area_ptr]       # rcx = __afl_area_ptr[curr_loc ^ prev_loc]
-            inc byte ptr [rcx]                              # __afl_area_ptr[curr_loc ^ prev_loc]++
-            
-            # Return
-            add al,0x7f
-            sahf
+            {trace}
 
             mov rax, qword ptr [rsp+0x8]
             mov rcx, qword ptr [rsp]
             lea rsp, [rsp+0x90]
         '''
-
-    @staticmethod
-    def trace_asm_(block_id: int) -> str:
-        '''
-        ASM to call tracing function
-        :param block_id: unique ID of block patch is being generated for
-        '''
-        return f'''
-            # Using lea + mov as it might be faster than consecutive pushes
-            # Subtract stack past red-zone (keep it unmodified)
-            # red zone = 128 = 0x80. we push two registers, so sub 0x90
-            lea rsp,[rsp-0x90]
-            mov qword ptr [rsp], rcx
-            mov qword ptr [rsp+0x8], rax # rax clobbered by lahf inside func
-
-            mov rcx, {hex(block_id)}
-            call {AFL_TRACE_FUNC}
-
-            mov rax, qword ptr [rsp+0x8]
-            mov rcx, qword ptr [rsp]
-            lea rsp, [rsp+0x90]
-        '''
-
 
     @staticmethod
     def trace_func_asm(never_zero: bool = False) -> str:
+        return AddAFLPlusPlusPass.tracing_asm(inline=False, never_zero=never_zero)
+
+    @staticmethod
+    def tracing_asm(inline: bool = False, never_zero: bool = False) -> str:
         '''
-        Tracing function
+        Tracing code
         Heavily inspired via afl-as assembly patches. 
         Small tweak to remove rdx dependency (makes it very slightly faster)
         See insp here: https://github.com/mirrorer/afl/blob/master/afl-as.h
+        :param inline: if not inline, will add ret at end
         :param never_zero: if counters should wrap to 1 instead of 0
         '''
         inc_counter = 'inc byte ptr [rcx]'
@@ -352,6 +327,7 @@ class AddAFLPlusPlusPass(Pass):
                 add byte ptr [rcx], 0x1
                 adc byte ptr [rcx], 0x0 # map[index] = 1 on overflow
             ''')
+        ret = '' if inline else 'ret' 
         return f'''
             # Store flags on stack (apparently faster than pushf)
             lahf
@@ -366,7 +342,7 @@ class AddAFLPlusPlusPass(Pass):
             # Return
             add al,0x7f
             sahf
-            ret
+            {ret}
         '''
 
     def begin_module(self, module, functions, rewriting_ctx):
@@ -399,37 +375,34 @@ class AddAFLPlusPlusPass(Pass):
             rewriting_ctx
         )
 
-        # Insert trace function
-        rewriting_ctx.register_insert_function(
-            AFL_TRACE_FUNC,
-            Patch.from_function(
-                partial (
-                    lambda nz, _: AddAFLPlusPlusPass.trace_func_asm(nz),
-                self.never_zero),
-                Constraints(x86_syntax=X86Syntax.INTEL)
+        # Insert trace function if not inline
+        if not self.inline_tracing:
+            rewriting_ctx.register_insert_function(
+                AFL_TRACE_FUNC,
+                Patch.from_function(
+                    partial (
+                        lambda nz, _: AddAFLPlusPlusPass.trace_func_asm(nz),
+                    self.never_zero),
+                    Constraints(x86_syntax=X86Syntax.INTEL)
+                )
             )
-        )
 
         instr_count = 0
         for func in functions:
-            # don't instrument entrypoint as we need to setup stuff before then
-
-            if module.entry_point not in func.get_all_blocks():
-
-                blocks = utils.get_basic_blocks(func)
-                for blocklist in blocks:
-                    block_id = random.getrandbits(16)
-
-                    # create trace patch
-                    rewriting_ctx.register_insert(
-                        SingleBlockScope(blocklist[0], BlockPosition.ENTRY),
-                        Patch.from_function(
-                            partial(
-                                lambda id, _: AddAFLPlusPlusPass.trace_asm(id),
-                            block_id),
-                            Constraints(x86_syntax=X86Syntax.INTEL)
-                        )
+            blocks = utils.get_basic_blocks(func)
+            for blocklist in blocks:
+                block_id = random.getrandbits(16)
+                # create trace patch
+                rewriting_ctx.register_insert(
+                    SingleBlockScope(blocklist[0], BlockPosition.ENTRY),
+                    Patch.from_function(
+                        partial(
+                            lambda id, it, nz, _: AddAFLPlusPlusPass.trace_asm(id, it, nz),
+                        block_id, self.inline_tracing, self.never_zero),
+                        Constraints(x86_syntax=X86Syntax.INTEL)
                     )
-                    instr_count += 1
+                )
+                instr_count += 1
 
-        log.info(f"Adding tracing code to {instr_count} locations ...")
+        in_info = ' inline ' if self.inline_tracing else ' '
+        log.info(f"Adding{in_info}tracing code to {instr_count} locations ...")
