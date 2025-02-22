@@ -75,14 +75,14 @@ class AFLPlusPlusRewriter(Rewriter):
             except ValueError:
                 parser.error(f'Can\'t parse "{loc}" as address, please provide hex address (e.g. 0x75a0)')
 
-        # Inlined tracing
-        parser.add_argument(
-            '--inlined-tracing', default=False, action='store_true', required=False,
-            help=textwrap.dedent('''\
-                Use inline tracing. Makes binary bigger and a bit slower. Don't
-                use this. Default: false
-            ''')
-        )
+        # Inlined tracing (no point is slower)
+        # parser.add_argument(
+        #     '--inlined-tracing', default=False, action='store_true', required=False,
+        #     help=textwrap.dedent('''\
+        #         Use inline tracing. Makes binary bigger and a bit slower. Don't
+        #         use this. Default: false
+        #     ''')
+        # )
 
         # never zero counters
         parser.add_argument(
@@ -147,7 +147,8 @@ class AFLPlusPlusRewriter(Rewriter):
         self.module = ir.modules[0]
         self.addr_cb_map = mappings
 
-        self.inline: bool = args.inlined_tracing
+        # self.inline: bool = args.inlined_tracing
+        self.inline: bool = False
         self.never_zero: bool = args.never_zero
 
         self.pers_mode_cnt: int | None = args.persistent_mode_count
@@ -329,7 +330,7 @@ class AddAFLPlusPlusPass(Pass):
             ''')
         ret = '' if inline else 'ret' 
         return f'''
-            # Store flags on stack (apparently faster than pushf)
+            # Store flags on stack (faster than pushf)
             lahf
             seto al
             
