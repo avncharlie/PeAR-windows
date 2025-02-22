@@ -17,7 +17,7 @@ from typing import NamedTuple
 from ..utils import run_cmd, check_executables_exist
 from .conftest import windows_only, get_gen_binary_from_pear_output
 
-TEST_PROG_DIR = importlib.resources.files(__package__) / 'test_winafl'
+TEST_PROG_DIR = importlib.resources.files(__package__) / 'test_fuzz'
 WINAFL_TIMEOUT=30
 GENERIC_TARGET_FUNC_NAME='read_and_test_file'
 
